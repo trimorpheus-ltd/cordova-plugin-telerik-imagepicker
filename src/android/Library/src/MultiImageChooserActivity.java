@@ -3,25 +3,25 @@
  *
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without 
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following  conditions are met:
  *
- *   Redistributions of source code must retain the above copyright notice, 
+ *   Redistributions of source code must retain the above copyright notice,
  *      this list of conditions and the following disclaimer.
- *   Redistributions in binary form must reproduce the above copyright notice, 
- *      this list of conditions and the following  disclaimer in the 
+ *   Redistributions in binary form must reproduce the above copyright notice,
+ *      this list of conditions and the following  disclaimer in the
  *      documentation and/or other materials provided with the distribution.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,  BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
- * ARE DISCLAIMED. IN NO EVENT  SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE 
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR  BUSINESS 
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDIN G NEGLIGENCE OR OTHERWISE) 
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,  BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT  SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR  BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDIN G NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH  DAMAGE
  *
  * Code modified by Andrew Stephan for Sync OnSet
@@ -33,20 +33,21 @@ package com.synconset;
 import java.net.URI;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
 
 import com.synconset.FakeR;
 import android.app.AlertDialog;
 import android.app.LoaderManager;
 import android.app.ProgressDialog;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.CursorLoader;
 import android.content.DialogInterface;
@@ -61,6 +62,7 @@ import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.support.v7.app.ActionBar;
 import android.support.v7.app.AppCompatActivity;
@@ -94,13 +96,13 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
     private ImageAdapter ia;
 
     private Cursor imagecursor, actualimagecursor;
-    private int image_column_index, image_column_orientation, actual_image_column_index, orientation_column_index;
+    private int image_column_index, image_column_orientation, actual_image_column_index, actual_displayName_column_index, orientation_column_index;
     private int colWidth;
 
     private static final int CURSORLOADER_THUMBS = 0;
     private static final int CURSORLOADER_REAL = 1;
 
-    private Map<String, Integer> fileNames = new HashMap<String, Integer>();
+    private Map<Uri, ImageInfo> fileNames = new HashMap<Uri, ImageInfo>();
 
     private SparseBooleanArray checkStatus = new SparseBooleanArray();
 
@@ -185,12 +187,9 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
 
     @Override
     public void onItemClick(AdapterView<?> arg0, View view, int position, long id) {
-        String name = getImageName(position);
-        int rotation = getImageRotation(position);
-
-        if (name == null) {
+        ImageInfo imageInfo = getImageInfo(position);
+        if (imageInfo == null)
             return;
-        }
 
         boolean isChecked = !isChecked(position);
 
@@ -208,7 +207,7 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
                     .show();
 
         } else if (isChecked) {
-            fileNames.put(name, rotation);
+            fileNames.put(imageInfo.uri, imageInfo);
 
             if (maxImageCount == 1) {
                 selectClicked();
@@ -226,7 +225,7 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
                 view.setBackgroundColor(selectedColor);
             }
         } else {
-            fileNames.remove(name);
+            fileNames.remove(imageInfo.uri);
             maxImages++;
             ImageView imageView = (ImageView) view;
 
@@ -245,23 +244,12 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
 
     @Override
     public Loader<Cursor> onCreateLoader(int cursorID, Bundle arg1) {
-        ArrayList<String> img = new ArrayList<String>();
-        switch (cursorID) {
-            case CURSORLOADER_THUMBS:
-                img.add(MediaStore.Images.Media._ID);
-                img.add(MediaStore.Images.Media.ORIENTATION);
-                break;
-
-            case CURSORLOADER_REAL:
-                img.add(MediaStore.Images.Thumbnails.DATA);
-                img.add(MediaStore.Images.Media.ORIENTATION);
-                break;
-        }
+        String[] img = {MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.ORIENTATION};
 
         return new CursorLoader(
                 this,
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                img.toArray(new String[img.size()]),
+                img,
                 null,
                 null,
                 "DATE_MODIFIED DESC"
@@ -285,7 +273,8 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
 
             case CURSORLOADER_REAL:
                 actualimagecursor = cursor;
-                actual_image_column_index = actualimagecursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                actual_image_column_index = actualimagecursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                actual_displayName_column_index = actualimagecursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
                 orientation_column_index = actualimagecursor.getColumnIndexOrThrow(MediaStore.Images.Media.ORIENTATION);
                 break;
         }
@@ -320,7 +309,7 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
             finish();
         } else {
             setRequestedOrientation(getResources().getConfiguration().orientation); //prevent orientation changes during processing
-            new ResizeImagesTask().execute(fileNames.entrySet());
+            new ResizeImagesTask().execute(fileNames.values());
         }
     }
 
@@ -392,30 +381,17 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
         }
     }
 
-    private String getImageName(int position) {
-        actualimagecursor.moveToPosition(position);
-        String name = null;
-
+    private ImageInfo getImageInfo(int position) {
         try {
-            name = actualimagecursor.getString(actual_image_column_index);
+            actualimagecursor.moveToPosition(position);
+            long id = actualimagecursor.getLong(actual_image_column_index);
+            Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+            String displayName = actualimagecursor.getString(actual_displayName_column_index);
+            int rotation = actualimagecursor.getInt(orientation_column_index);
+            return new ImageInfo(uri, displayName, rotation);
         } catch (Exception e) {
-            // Do something?
+            return null;
         }
-
-        return name;
-    }
-
-    private int getImageRotation(int position) {
-        actualimagecursor.moveToPosition(position);
-        int rotation = 0;
-
-        try {
-            rotation = actualimagecursor.getInt(orientation_column_index);
-        } catch (Exception e) {
-            // Do something?
-        }
-
-        return rotation;
     }
 
     public boolean isChecked(int position) {
@@ -505,69 +481,75 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
         }
     }
 
-    private class ResizeImagesTask extends AsyncTask<Set<Entry<String, Integer>>, Void, ArrayList<String>> {
+    private class ResizeImagesTask extends AsyncTask<Collection<ImageInfo>, Void, ArrayList<String>> {
         private Exception asyncTaskError = null;
 
         @Override
-        protected ArrayList<String> doInBackground(Set<Entry<String, Integer>>... fileSets) {
-            Set<Entry<String, Integer>> fileNames = fileSets[0];
+        protected ArrayList<String> doInBackground(Collection<ImageInfo>... fileSets) {
+            Collection<ImageInfo> images = fileSets[0];
             ArrayList<String> al = new ArrayList<String>();
             try {
-                Iterator<Entry<String, Integer>> i = fileNames.iterator();
+                Iterator<ImageInfo> i = images.iterator();
                 Bitmap bmp;
                 while (i.hasNext()) {
-                    Entry<String, Integer> imageInfo = i.next();
-                    File file = new File(imageInfo.getKey());
-                    int rotate = imageInfo.getValue();
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inSampleSize = 1;
-                    options.inJustDecodeBounds = true;
-                    BitmapFactory.decodeFile(file.getAbsolutePath(), options);
-                    int width = options.outWidth;
-                    int height = options.outHeight;
-                    float scale = calculateScale(width, height);
+                    ImageInfo imageInfo = i.next();
+                    ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(imageInfo.uri, "r");
+                    try {
+                        FileDescriptor fd = pfd.getFileDescriptor();
+                        int rotate = imageInfo.orientation;
+                        BitmapFactory.Options options = new BitmapFactory.Options();
+                        options.inSampleSize = 1;
+                        options.inJustDecodeBounds = true;
+                        BitmapFactory.decodeFileDescriptor(fd, null, options);
+                        int width = options.outWidth;
+                        int height = options.outHeight;
+                        float scale = calculateScale(width, height);
 
-                    if (scale < 1) {
-                        int finalWidth = (int)(width * scale);
-                        int finalHeight = (int)(height * scale);
-                        int inSampleSize = calculateInSampleSize(options, finalWidth, finalHeight);
-                        options = new BitmapFactory.Options();
-                        options.inSampleSize = inSampleSize;
-
-                        try {
-                            bmp = this.tryToGetBitmap(file, options, rotate, true);
-                        } catch (OutOfMemoryError e) {
-                            options.inSampleSize = calculateNextSampleSize(options.inSampleSize);
-                            try {
-                                bmp = this.tryToGetBitmap(file, options, rotate, false);
-                            } catch (OutOfMemoryError e2) {
-                                throw new IOException("Unable to load image into memory.");
-                            }
-                        }
-                    } else {
-                        try {
-                            bmp = this.tryToGetBitmap(file, null, rotate, false);
-                        } catch(OutOfMemoryError e) {
+                        if (scale < 1) {
+                            int finalWidth = (int)(width * scale);
+                            int finalHeight = (int)(height * scale);
+                            int inSampleSize = calculateInSampleSize(options, finalWidth, finalHeight);
                             options = new BitmapFactory.Options();
-                            options.inSampleSize = 2;
+                            options.inSampleSize = inSampleSize;
 
                             try {
-                                bmp = this.tryToGetBitmap(file, options, rotate, false);
-                            } catch(OutOfMemoryError e2) {
+                                bmp = this.tryToGetBitmap(fd, options, rotate, true);
+                            } catch (OutOfMemoryError e) {
+                                options.inSampleSize = calculateNextSampleSize(options.inSampleSize);
+                                try {
+                                    bmp = this.tryToGetBitmap(fd, options, rotate, false);
+                                } catch (OutOfMemoryError e2) {
+                                    throw new IOException("Unable to load image into memory.");
+                                }
+                            }
+                        } else {
+                            try {
+                                bmp = this.tryToGetBitmap(fd, null, rotate, false);
+                            } catch(OutOfMemoryError e) {
                                 options = new BitmapFactory.Options();
-                                options.inSampleSize = 4;
+                                options.inSampleSize = 2;
 
                                 try {
-                                    bmp = this.tryToGetBitmap(file, options, rotate, false);
-                                } catch (OutOfMemoryError e3) {
-                                    throw new IOException("Unable to load image into memory.");
+                                    bmp = this.tryToGetBitmap(fd, options, rotate, false);
+                                } catch(OutOfMemoryError e2) {
+                                    options = new BitmapFactory.Options();
+                                    options.inSampleSize = 4;
+
+                                    try {
+                                        bmp = this.tryToGetBitmap(fd, options, rotate, false);
+                                    } catch (OutOfMemoryError e3) {
+                                        throw new IOException("Unable to load image into memory.");
+                                    }
                                 }
                             }
                         }
                     }
+                    finally {
+                        pfd.close();
+                    }
 
                     if (outputType == OutputType.FILE_URI) {
-                        file = storeImage(bmp, file.getName());
+                        File file = storeImage(bmp, imageInfo.displayName);
                         al.add(Uri.fromFile(file).toString());
 
                     } else if (outputType == OutputType.BASE64_STRING) {
@@ -620,15 +602,15 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
             finish();
         }
 
-        private Bitmap tryToGetBitmap(File file,
+        private Bitmap tryToGetBitmap(FileDescriptor fd,
                                       BitmapFactory.Options options,
                                       int rotate,
                                       boolean shouldScale) throws IOException, OutOfMemoryError {
             Bitmap bmp;
             if (options == null) {
-                bmp = BitmapFactory.decodeFile(file.getAbsolutePath());
+                bmp = BitmapFactory.decodeFileDescriptor(fd);
             } else {
-                bmp = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+                bmp = BitmapFactory.decodeFileDescriptor(fd, null, options);
             }
 
             if (bmp == null) {
@@ -660,9 +642,11 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
         */
         private File storeImage(Bitmap bmp, String fileName) throws IOException {
             int index = fileName.lastIndexOf('.');
+            if (index < 0)
+                index = fileName.length();
             String name = fileName.substring(0, index);
             String ext = fileName.substring(index);
-            File file = File.createTempFile("tmp_" + name, ext);
+            File file = File.createTempFile("tmp_" + name + "_", ext);
             OutputStream outStream = new FileOutputStream(file);
 
             if (ext.compareToIgnoreCase(".png") == 0) {
@@ -768,6 +752,18 @@ public class MultiImageChooserActivity extends AppCompatActivity implements
                 }
             }
             throw new IllegalArgumentException("Invalid enum value specified");
+        }
+    }
+
+    class ImageInfo {
+        final Uri uri;
+        final String displayName;
+        final int orientation;
+
+        ImageInfo(Uri uri, String displayName, int orientation) {
+            this.uri = uri;
+            this.displayName = displayName;
+            this.orientation = orientation;
         }
     }
 }
