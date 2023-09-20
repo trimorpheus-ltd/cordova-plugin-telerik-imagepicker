@@ -24,6 +24,9 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 
 public class ImagePicker extends CordovaPlugin {
+    // Constants declared in SDK 33
+	private static final int Build_VERSION_CODES_TIRAMISU = 33;
+	private static final String Manifest_permission_READ_MEDIA_IMAGES = "android.permission.READ_MEDIA_IMAGES";
 
     private static final String ACTION_GET_PICTURES = "getPictures";
     private static final String ACTION_HAS_READ_PERMISSION = "hasReadPermission";
@@ -102,10 +105,14 @@ public class ImagePicker extends CordovaPlugin {
         return false;
     }
 
+    private String getMediaPermissionName() {
+        return Build.VERSION.SDK_INT >= Build_VERSION_CODES_TIRAMISU ? Manifest_permission_READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
+    }
+
     @SuppressLint("InlinedApi")
     private boolean hasReadPermission() {
         return Build.VERSION.SDK_INT < 23 ||
-            PackageManager.PERMISSION_GRANTED == ContextCompat.checkSelfPermission(this.cordova.getActivity(), Manifest.permission.READ_EXTERNAL_STORAGE);
+            PackageManager.PERMISSION_GRANTED == ContextCompat.checkSelfPermission(this.cordova.getActivity(), getMediaPermissionName());
     }
 
     @SuppressLint("InlinedApi")
@@ -113,7 +120,7 @@ public class ImagePicker extends CordovaPlugin {
         if (!hasReadPermission()) {
             ActivityCompat.requestPermissions(
                 this.cordova.getActivity(),
-                new String[] {Manifest.permission.READ_EXTERNAL_STORAGE},
+                new String[] {getMediaPermissionName()},
                 PERMISSION_REQUEST_CODE);
         }
         // This method executes async and we seem to have no known way to receive the result
